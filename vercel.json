@@ -19,10 +19,6 @@
       "destination": "/api/server-bridge.ts"
     },
     {
-      "source": "/socket.io/(.*)",
-      "destination": "/api/server-bridge.ts"
-    },
-    {
       "source": "/(.*)",
       "destination": "/$1"
     }
