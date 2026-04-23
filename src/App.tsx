@@ -39,6 +39,10 @@ export default function App() {
   const activeTabRef = useRef<TabType>(activeTab);
   const currentSaleRef = useRef<string>(currentSale);
 
+  // userSelectedRef: true when user manually picked a sale.
+  // Background polls will not overwrite their selection while this is true.
+  const userSelectedRef = useRef(false);
+
   // Keep refs in sync
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
   useEffect(() => { currentSaleRef.current = currentSale; }, [currentSale]);
@@ -80,12 +84,13 @@ export default function App() {
     }
   }, []);
 
-  const loadData = useCallback(async (isInitial = false) => {
+  const loadData = useCallback(async (isInitial = false, force = false) => {
     try {
       if (!isInitial) setIsSyncing(true);
       setError(null);
 
-      const data = await fetchAllSales();
+      // force=true bypasses the 30s server cache and hits Google fresh
+      const data = await fetchAllSales(force);
 
       if (Object.keys(data).length === 0) {
         throw new Error('No sales data received from backend');
@@ -93,11 +98,33 @@ export default function App() {
 
       // Smart Change Detection — only update UI if actual data changed
       const newHash = JSON.stringify(data);
-      if (!isInitial && newHash === prevDataHashRef.current) {
+      if (!isInitial && !force && newHash === prevDataHashRef.current) {
         return; // No changes detected, skip silently
       }
 
       prevDataHashRef.current = newHash;
+
+      // ── Key fix: on background poll, if user manually chose a sale that still
+      // exists in the new data, keep it — never overwrite their active selection.
+      if (!isInitial && userSelectedRef.current) {
+        setSalesData(data);
+        setLastUpdated(new Date());
+        setLiveStatus('live');
+
+        const tab = activeTabRef.current;
+        const currentList = data[tab] || [];
+        const stillExists = currentList.find(s => s.saleName === currentSaleRef.current);
+        if (stillExists) {
+          // User's chosen sale still in the sheet — update its prices silently
+          setPlans(stillExists.plans);
+          setFlashText(stillExists.displayName.toUpperCase());
+          if (stillExists.discountPercent) setDiscountPercent(stillExists.discountPercent);
+          return;
+        }
+        // Their sale was removed from the sheet — fall through to auto-select latest
+        userSelectedRef.current = false;
+      }
+
       applyData(data, isInitial);
 
       if (!isInitial) {
@@ -165,6 +192,8 @@ export default function App() {
     const currentList = salesData[activeTab] || [];
     const sale = currentList.find(s => s.saleName === saleName);
     if (sale) {
+      // Mark that user has manually chosen — polls won't overwrite this
+      userSelectedRef.current = true;
       setCurrentSale(saleName);
       currentSaleRef.current = saleName;
       setPlans(sale.plans);
@@ -331,7 +360,7 @@ export default function App() {
           setCurrentSale: handleSaleChange,
           handleDownload: handleDownload,
           handleImageUpload: handleImageUpload,
-          handleRefresh: () => loadData(false)
+          handleRefresh: () => { userSelectedRef.current = false; loadData(false, true); }
         }}
       />
 

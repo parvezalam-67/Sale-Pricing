@@ -17,13 +17,14 @@ export interface AllSalesData {
   [key: string]: SalePricing[];
 }
 
-export async function fetchAllSales(): Promise<AllSalesData> {
+export async function fetchAllSales(force = false): Promise<AllSalesData> {
   const allResults: AllSalesData = {};
   
   for (const gid of GIDS) {
     try {
-      // Fetching data via backend proxy to avoid CORS
-      const response = await axios.get(`/api/proxy-sheet?gid=${gid}&t=${Date.now()}`);
+      // force=1 tells the server to bypass its 30s cache and hit Google fresh
+      const forceParam = force ? '&force=1' : '';
+      const response = await axios.get(`/api/proxy-sheet?gid=${gid}&t=${Date.now()}${forceParam}`);
       const records: string[][] = await new Promise((resolve, reject) => {
         parse(response.data, {
           columns: false,
