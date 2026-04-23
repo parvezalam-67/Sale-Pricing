@@ -4,7 +4,6 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { io } from 'socket.io-client';
 import { BannerCanvas } from './components/BannerCanvas';
 import { ControlPanel } from './components/ControlPanel';
 import { generateBannerBackground } from './services/ai';
@@ -13,6 +12,10 @@ import { PLANS as STATIC_PLANS, THEMES } from './constants';
 
 type TabType = string;
 
+// How often to poll Google Sheet for changes (in milliseconds)
+const POLL_INTERVAL = 15000;       // Check for changes every 15 seconds
+const KEEPALIVE_INTERVAL = 60000;  // Ping server every 60s to prevent sleeping
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('forex');
   const [flashText, setFlashText] = useState('FLASH SALE');
@@ -20,7 +23,7 @@ export default function App() {
   const [bgImage, setBgImage] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [bgPrompt, setBgPrompt] = useState('Abstract forex trading chart with glowing neon green lines on deep black background, cinematic lighting');
-  
+
   // Dynamic Sheet Data State
   const [salesData, setSalesData] = useState<AllSalesData | null>(null);
   const [currentSale, setCurrentSale] = useState('');
@@ -28,102 +31,131 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [liveStatus, setLiveStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
+
+  // Store previous data hash for change detection
+  const prevDataHashRef = useRef<string>('');
+  const activeTabRef = useRef<TabType>(activeTab);
+  const currentSaleRef = useRef<string>(currentSale);
+
+  // Keep refs in sync
+  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+  useEffect(() => { currentSaleRef.current = currentSale; }, [currentSale]);
+
+  const applyData = useCallback((data: AllSalesData, isInitial = false) => {
+    setSalesData(data);
+    setLastUpdated(new Date());
+    setLiveStatus('live');
+
+    if (isInitial) {
+      const keys = Object.keys(data);
+      const initialTab = keys.includes('signals') ? 'signals' : (keys.includes('forex') ? 'forex' : keys[0]);
+
+      if (initialTab) {
+        setActiveTab(initialTab);
+        activeTabRef.current = initialTab;
+        const currentList = data[initialTab] || [];
+        if (currentList.length > 0) {
+          const latestSale = currentList[currentList.length - 1];
+          setCurrentSale(latestSale.saleName);
+          currentSaleRef.current = latestSale.saleName;
+          setPlans(latestSale.plans);
+          setFlashText(latestSale.displayName.toUpperCase());
+          if (latestSale.discountPercent) setDiscountPercent(latestSale.discountPercent);
+        }
+      }
+    } else {
+      // On live update, refresh current selection if it still exists
+      const tab = activeTabRef.current;
+      const currentList = data[tab] || [];
+      if (currentList.length > 0) {
+        const sale = currentList.find(s => s.saleName === currentSaleRef.current) || currentList[currentList.length - 1];
+        setCurrentSale(sale.saleName);
+        currentSaleRef.current = sale.saleName;
+        setPlans(sale.plans);
+        setFlashText(sale.displayName.toUpperCase());
+        if (sale.discountPercent) setDiscountPercent(sale.discountPercent);
+      }
+    }
+  }, []);
 
   const loadData = useCallback(async (isInitial = false) => {
     try {
       if (!isInitial) setIsSyncing(true);
       setError(null);
+
       const data = await fetchAllSales();
-      
+
       if (Object.keys(data).length === 0) {
         throw new Error('No sales data received from backend');
       }
 
-      setSalesData(prev => {
-        // Simple comparison to check if we should update
-        if (JSON.stringify(prev) === JSON.stringify(data)) return prev;
-        
-        // If data changed or it's initial load, update states
-        if (isInitial) {
-          const keys = Object.keys(data);
-          // Default logic for initial load: signals > forex > first available
-          const initialTab = keys.includes('signals') ? 'signals' : (keys.includes('forex') ? 'forex' : keys[0]);
-          
-          if (initialTab && !activeTab) {
-            setActiveTab(initialTab);
-          }
+      // Smart Change Detection — only update UI if actual data changed
+      const newHash = JSON.stringify(data);
+      if (!isInitial && newHash === prevDataHashRef.current) {
+        return; // No changes detected, skip silently
+      }
 
-          if (initialTab) {
-            const currentList = data[initialTab] || [];
-            if (currentList.length > 0) {
-              const latestSale = currentList[currentList.length - 1];
-              setCurrentSale(latestSale.saleName);
-              setPlans(latestSale.plans);
-              setFlashText(latestSale.displayName.toUpperCase());
-              if (latestSale.discountPercent) setDiscountPercent(latestSale.discountPercent);
-            }
-          }
-        }
-        return data;
-      });
+      prevDataHashRef.current = newHash;
+      applyData(data, isInitial);
+
+      if (!isInitial) {
+        console.log('✅ Sheet change detected! UI updated at', new Date().toLocaleTimeString());
+      }
+
     } catch (err: any) {
       console.error('Data sync failed', err);
+      setLiveStatus('error');
       if (isInitial) setError(err.message || 'Failed to connect to spreadsheet data');
     } finally {
-      if (!isInitial) {
-        setTimeout(() => setIsSyncing(false), 2000); // Keep indicator for 2s
-      } else {
+      if (isInitial) {
         setIsLoading(false);
+      } else {
+        setTimeout(() => setIsSyncing(false), 1500);
       }
     }
-  }, []); // Removed currentSale dependency to prevent reset loop
+  }, [applyData]);
 
+  // Initial load
   useEffect(() => {
     loadData(true);
   }, [loadData]);
 
-  // Socket.io Real-time Setup
+  // ✅ Real-time polling — checks sheet every 15 seconds for any change
   useEffect(() => {
-    // Only attempt real-time connection if NOT in a strict serverless env that might crash on it
-    // Vercel handles requests as lambdas, standard websockets won't stay open
-    if (window.location.hostname.includes('vercel.app')) {
-      console.log('Real-time sync disabled on Vercel deployment (Serverless limitations)');
-      return;
-    }
+    const pollTimer = setInterval(() => {
+      loadData(false);
+    }, POLL_INTERVAL);
 
-    const socket = io({
-      transports: ['polling', 'websocket'],
-      reconnectionAttempts: 5,
-      timeout: 10000
-    });
-
-    socket.on('connect', () => {
-      console.log('Real-time connection established');
-    });
-
-    socket.on('sheet-updated', () => {
-      console.log('Live update received from Google Sheet!');
-      loadData();
-    });
-
-    return () => {
-      socket.disconnect();
-    };
+    return () => clearInterval(pollTimer);
   }, [loadData]);
+
+  // ✅ Keep-alive — pings the server every 60s to prevent Vercel cold starts
+  useEffect(() => {
+    const keepAlive = async () => {
+      try {
+        await fetch(`/api/proxy-sheet?gid=0&ping=1&t=${Date.now()}`);
+      } catch {
+        // Silent fail — just a keep-alive ping
+      }
+    };
+
+    const aliveTimer = setInterval(keepAlive, KEEPALIVE_INTERVAL);
+    return () => clearInterval(aliveTimer);
+  }, []);
 
   // Update when tab changes
   useEffect(() => {
     if (salesData && activeTab) {
       const currentList = salesData[activeTab] || [];
       if (currentList.length > 0) {
-        // Look for the current sale name in the new list, or default to the LAST (latest) in the list
         const sale = currentList.find(s => s.saleName === currentSale) || currentList[currentList.length - 1];
         setCurrentSale(sale.saleName);
+        currentSaleRef.current = sale.saleName;
         setPlans(sale.plans);
         setFlashText(sale.displayName.toUpperCase());
-        if (sale.discountPercent) {
-          setDiscountPercent(sale.discountPercent);
-        }
+        if (sale.discountPercent) setDiscountPercent(sale.discountPercent);
       }
     }
   }, [activeTab, salesData]);
@@ -134,11 +166,10 @@ export default function App() {
     const sale = currentList.find(s => s.saleName === saleName);
     if (sale) {
       setCurrentSale(saleName);
+      currentSaleRef.current = saleName;
       setPlans(sale.plans);
       setFlashText(sale.displayName.toUpperCase());
-      if (sale.discountPercent) {
-        setDiscountPercent(sale.discountPercent);
-      }
+      if (sale.discountPercent) setDiscountPercent(sale.discountPercent);
     }
   };
 
@@ -149,7 +180,6 @@ export default function App() {
     setIsGenerating(false);
   };
 
-  /* Global Pattern Styles */
   const bannerRef = useRef<HTMLDivElement>(null);
   const [customBgImage, setCustomBgImage] = useState<string | null>(null);
 
@@ -157,9 +187,7 @@ export default function App() {
     const file = event.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = (e) => {
-        setCustomBgImage(e.target?.result as string);
-      };
+      reader.onload = (e) => setCustomBgImage(e.target?.result as string);
       reader.readAsDataURL(file);
     }
   };
@@ -168,14 +196,11 @@ export default function App() {
     if (!bannerRef.current) return;
     try {
       const { toPng } = await import('html-to-image');
-      
-      // Calculate 2K dimensions (2560x1440)
       const targetWidth = 2560;
       const targetHeight = 1440;
-      
-      const dataUrl = await toPng(bannerRef.current, { 
+      const dataUrl = await toPng(bannerRef.current, {
         cacheBust: true,
-        pixelRatio: 2, // Double resolution for extra sharpness
+        pixelRatio: 2,
         canvasWidth: targetWidth,
         canvasHeight: targetHeight,
         style: {
@@ -185,7 +210,6 @@ export default function App() {
           borderRadius: '0'
         }
       });
-      
       const link = document.createElement('a');
       link.download = `${activeTab}-subscription-banner.png`;
       link.href = dataUrl;
@@ -206,11 +230,11 @@ export default function App() {
             {error ? 'CONNECTION ERROR' : 'SURESHOT FX'}
           </h2>
           <p className="text-gray-500 text-[10px] uppercase font-black tracking-widest mt-2 px-8 text-center max-w-md">
-            {error ? error : 'Connecting to Data Intelligence...'}
+            {error ? error : 'Connecting to Live Data...'}
           </p>
           {error && (
-            <button 
-              onClick={() => loadData(true)}
+            <button
+              onClick={() => { setError(null); setIsLoading(true); loadData(true); }}
               className="mt-6 px-8 py-2 bg-red-500/10 border border-red-500 text-red-500 text-[10px] uppercase font-black tracking-widest hover:bg-red-500 hover:text-white transition-all rounded-full"
             >
               Retry Connection
@@ -223,17 +247,46 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen bg-black font-sans text-white overflow-hidden selection:bg-[#00e676] selection:text-black">
+
+      {/* ✅ Live Status Bar */}
+      <div className="flex items-center justify-between px-6 py-1.5 bg-[#020a04] border-b border-white/5">
+        <span className="text-[9px] font-black text-gray-600 uppercase tracking-widest">SureshotFX Banner Studio</span>
+        <div className="flex items-center space-x-2">
+          {liveStatus === 'live' && (
+            <>
+              <div className="w-1.5 h-1.5 bg-[#00e676] rounded-full animate-pulse shadow-[0_0_6px_#00e676]" />
+              <span className="text-[9px] font-black text-[#00e676] uppercase tracking-widest">
+                Live · Checks every 15s
+                {lastUpdated && ` · ${lastUpdated.toLocaleTimeString()}`}
+              </span>
+            </>
+          )}
+          {liveStatus === 'connecting' && (
+            <>
+              <div className="w-1.5 h-1.5 bg-yellow-400 rounded-full animate-pulse" />
+              <span className="text-[9px] font-black text-yellow-400 uppercase tracking-widest">Connecting...</span>
+            </>
+          )}
+          {liveStatus === 'error' && (
+            <>
+              <div className="w-1.5 h-1.5 bg-red-500 rounded-full" />
+              <span className="text-[9px] font-black text-red-400 uppercase tracking-widest">Sync Error · Will retry</span>
+            </>
+          )}
+        </div>
+      </div>
+
       {/* Tab Switcher */}
       <div className="flex justify-center py-4 bg-[#030e06] border-b border-white/5 space-x-2 overflow-x-auto px-4">
         {salesData && Object.keys(salesData).length > 0 && Object.keys(salesData).map(key => {
           const theme = THEMES[key] || THEMES['forex'];
           const isActive = activeTab === key;
           return (
-            <button 
+            <button
               key={key}
               onClick={() => setActiveTab(key)}
               className={`px-8 py-2 rounded-full font-black uppercase tracking-widest transition-all duration-300 whitespace-nowrap ${isActive ? 'text-black' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}
-              style={isActive ? { 
+              style={isActive ? {
                 backgroundColor: theme.accent,
                 boxShadow: `0 0 20px ${theme.accent}4D`
               } : {}}
@@ -246,7 +299,7 @@ export default function App() {
 
       {/* The 16:9 Banner Canvas */}
       <div className="flex-1 flex items-center justify-center p-8 overflow-auto">
-        <BannerCanvas 
+        <BannerCanvas
           ref={bannerRef}
           mode={activeTab as any}
           flashText={flashText}
@@ -260,11 +313,11 @@ export default function App() {
       </div>
 
       {/* The Editor Control Panel */}
-      <ControlPanel 
-        props={{ 
-          flashText, 
-          discountPercent, 
-          bgPrompt, 
+      <ControlPanel
+        props={{
+          flashText,
+          discountPercent,
+          bgPrompt,
           isGenerating,
           isSyncing,
           availableSales: currentAvailableSales,
@@ -278,11 +331,10 @@ export default function App() {
           setCurrentSale: handleSaleChange,
           handleDownload: handleDownload,
           handleImageUpload: handleImageUpload,
-          handleRefresh: () => window.location.reload()
+          handleRefresh: () => loadData(false)
         }}
       />
 
-      {/* Global Pattern Styles */}
       <style>{`
         .bg-grid {
           background-size: 5vw 5vw;
