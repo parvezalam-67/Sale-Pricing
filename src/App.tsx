@@ -39,9 +39,9 @@ export default function App() {
   const activeTabRef = useRef<TabType>(activeTab);
   const currentSaleRef = useRef<string>(currentSale);
 
-  // userSelectedRef: true when user manually picked a sale.
-  // Background polls will not overwrite their selection while this is true.
-  const userSelectedRef = useRef(false);
+  // userHasSelected: true when user manually picked a sale.
+  // Background polls and salesData changes will NOT overwrite their selection.
+  const userHasSelected = useRef(false);
 
   // Keep refs in sync
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
@@ -106,7 +106,7 @@ export default function App() {
 
       // ── Key fix: on background poll, if user manually chose a sale that still
       // exists in the new data, keep it — never overwrite their active selection.
-      if (!isInitial && userSelectedRef.current) {
+      if (!isInitial && userHasSelected.current) {
         setSalesData(data);
         setLastUpdated(new Date());
         setLiveStatus('live');
@@ -122,7 +122,7 @@ export default function App() {
           return;
         }
         // Their sale was removed from the sheet — fall through to auto-select latest
-        userSelectedRef.current = false;
+        userHasSelected.current = false;
       }
 
       applyData(data, isInitial);
@@ -172,20 +172,33 @@ export default function App() {
     return () => clearInterval(aliveTimer);
   }, []);
 
-  // Update when tab changes
+  // Update when tab changes (NOT when salesData silently updates in background)
+  // We split this into two effects so a background poll updating salesData
+  // does NOT retrigger sale selection and overwrite the user's choice.
   useEffect(() => {
-    if (salesData && activeTab) {
-      const currentList = salesData[activeTab] || [];
-      if (currentList.length > 0) {
-        const sale = currentList.find(s => s.saleName === currentSale) || currentList[currentList.length - 1];
-        setCurrentSale(sale.saleName);
-        currentSaleRef.current = sale.saleName;
-        setPlans(sale.plans);
-        setFlashText(sale.displayName.toUpperCase());
-        if (sale.discountPercent) setDiscountPercent(sale.discountPercent);
-      }
+    // Only runs when the USER switches tabs — salesData changes are ignored here
+    if (!salesData || !activeTab) return;
+    const currentList = salesData[activeTab] || [];
+    if (currentList.length === 0) return;
+
+    if (userHasSelected.current) {
+      // User had a selection — try to keep it on the new tab, else pick last
+      const sale = currentList.find(s => s.saleName === currentSaleRef.current) || currentList[currentList.length - 1];
+      setCurrentSale(sale.saleName);
+      currentSaleRef.current = sale.saleName;
+      setPlans(sale.plans);
+      setFlashText(sale.displayName.toUpperCase());
+      if (sale.discountPercent) setDiscountPercent(sale.discountPercent);
+    } else {
+      // No user selection yet — auto-pick the last sale
+      const sale = currentList[currentList.length - 1];
+      setCurrentSale(sale.saleName);
+      currentSaleRef.current = sale.saleName;
+      setPlans(sale.plans);
+      setFlashText(sale.displayName.toUpperCase());
+      if (sale.discountPercent) setDiscountPercent(sale.discountPercent);
     }
-  }, [activeTab, salesData]);
+  }, [activeTab]); // ← ONLY activeTab here, NOT salesData
 
   const handleSaleChange = (saleName: string) => {
     if (!salesData || !activeTab) return;
@@ -193,7 +206,7 @@ export default function App() {
     const sale = currentList.find(s => s.saleName === saleName);
     if (sale) {
       // Mark that user has manually chosen — polls won't overwrite this
-      userSelectedRef.current = true;
+      userHasSelected.current = true;
       setCurrentSale(saleName);
       currentSaleRef.current = saleName;
       setPlans(sale.plans);
@@ -360,7 +373,7 @@ export default function App() {
           setCurrentSale: handleSaleChange,
           handleDownload: handleDownload,
           handleImageUpload: handleImageUpload,
-          handleRefresh: () => { userSelectedRef.current = false; loadData(false, true); }
+          handleRefresh: () => { userHasSelected.current = false; loadData(false, true); }
         }}
       />
 
