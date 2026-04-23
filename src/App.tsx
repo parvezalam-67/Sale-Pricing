@@ -27,12 +27,18 @@ export default function App() {
   const [plans, setPlans] = useState(STATIC_PLANS);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const loadData = useCallback(async (isInitial = false) => {
     try {
       if (!isInitial) setIsSyncing(true);
+      setError(null);
       const data = await fetchAllSales();
       
+      if (Object.keys(data).length === 0) {
+        throw new Error('No sales data received from backend');
+      }
+
       setSalesData(prev => {
         // Simple comparison to check if we should update
         if (JSON.stringify(prev) === JSON.stringify(data)) return prev;
@@ -60,8 +66,9 @@ export default function App() {
         }
         return data;
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error('Data sync failed', err);
+      if (isInitial) setError(err.message || 'Failed to connect to spreadsheet data');
     } finally {
       if (!isInitial) {
         setTimeout(() => setIsSyncing(false), 2000); // Keep indicator for 2s
@@ -77,7 +84,18 @@ export default function App() {
 
   // Socket.io Real-time Setup
   useEffect(() => {
-    const socket = io();
+    // Only attempt real-time connection if NOT in a strict serverless env that might crash on it
+    // Vercel handles requests as lambdas, standard websockets won't stay open
+    if (window.location.hostname.includes('vercel.app')) {
+      console.log('Real-time sync disabled on Vercel deployment (Serverless limitations)');
+      return;
+    }
+
+    const socket = io({
+      transports: ['polling', 'websocket'],
+      reconnectionAttempts: 5,
+      timeout: 10000
+    });
 
     socket.on('connect', () => {
       console.log('Real-time connection established');
@@ -182,10 +200,22 @@ export default function App() {
   if (isLoading) {
     return (
       <div className="h-screen w-screen bg-[#030e06] flex flex-col items-center justify-center space-y-6">
-        <div className="w-16 h-16 border-4 border-[#00e676]/20 border-t-[#00e676] rounded-full animate-spin shadow-[0_0_20px_rgba(0,230,118,0.2)]" />
+        <div className={`w-16 h-16 border-4 border-[#00e676]/20 border-t-[#00e676] rounded-full animate-spin shadow-[0_0_20px_rgba(0,230,118,0.2)] ${error ? 'border-red-500/20 border-t-red-500 animate-none' : ''}`} />
         <div className="flex flex-col items-center">
-          <h2 className="text-[#00e676] font-black uppercase tracking-[0.3em] text-xl animate-pulse">SURESHOT FX</h2>
-          <p className="text-gray-500 text-[10px] uppercase font-black tracking-widest mt-2">Connecting to Data Intelligence...</p>
+          <h2 className={`text-[#00e676] font-black uppercase tracking-[0.3em] text-xl ${error ? 'text-red-500' : 'animate-pulse'}`}>
+            {error ? 'CONNECTION ERROR' : 'SURESHOT FX'}
+          </h2>
+          <p className="text-gray-500 text-[10px] uppercase font-black tracking-widest mt-2 px-8 text-center max-w-md">
+            {error ? error : 'Connecting to Data Intelligence...'}
+          </p>
+          {error && (
+            <button 
+              onClick={() => loadData(true)}
+              className="mt-6 px-8 py-2 bg-red-500/10 border border-red-500 text-red-500 text-[10px] uppercase font-black tracking-widest hover:bg-red-500 hover:text-white transition-all rounded-full"
+            >
+              Retry Connection
+            </button>
+          )}
         </div>
       </div>
     );

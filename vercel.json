@@ -16,32 +16,15 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "api/server-bridge.ts"
+      "destination": "/api/server-bridge.ts"
     },
     {
       "source": "/socket.io/(.*)",
-      "destination": "api/server-bridge.ts"
+      "destination": "/api/server-bridge.ts"
     },
     {
       "source": "/(.*)",
       "destination": "/$1"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "api/server-bridge.ts"
-    },
-    {
-      "src": "/socket.io/(.*)",
-      "dest": "api/server-bridge.ts"
-    },
-    {
-      "handle": "filesystem"
-    },
-    {
-      "src": "/.*",
-      "dest": "/index.html"
     }
   ]
 }
