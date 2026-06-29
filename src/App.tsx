@@ -7,43 +7,36 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { BannerCanvas } from './components/BannerCanvas';
 import { ControlPanel } from './components/ControlPanel';
 import { generateBannerBackground } from './services/ai';
-import { fetchAllSales, SalePricing, AllSalesData } from './services/sheetService';
+import { fetchAllSales, AllSalesData } from './services/sheetService';
 import { PLANS as STATIC_PLANS, THEMES } from './constants';
 
 type TabType = string;
 
-// How often to poll Google Sheet for changes (in milliseconds)
-const POLL_INTERVAL = 15000;       // Check for changes every 15 seconds
-const KEEPALIVE_INTERVAL = 60000;  // Ping server every 60s to prevent sleeping
+// Keep-alive only — NO auto-poll
+const KEEPALIVE_INTERVAL = 60000;
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('forex');
-  const [flashText, setFlashText] = useState('FLASH SALE');
   const [discountPercent, setDiscountPercent] = useState('66');
   const [bgImage, setBgImage] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [bgPrompt, setBgPrompt] = useState('Abstract forex trading chart with glowing neon green lines on deep black background, cinematic lighting');
 
-  // Dynamic Sheet Data State
   const [salesData, setSalesData] = useState<AllSalesData | null>(null);
   const [currentSale, setCurrentSale] = useState('');
   const [plans, setPlans] = useState(STATIC_PLANS);
+  const [saleNameImage, setSaleNameImage] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [liveStatus, setLiveStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
 
-  // Store previous data hash for change detection
   const prevDataHashRef = useRef<string>('');
   const activeTabRef = useRef<TabType>(activeTab);
   const currentSaleRef = useRef<string>(currentSale);
-
-  // userHasSelected: true when user manually picked a sale.
-  // Background polls and salesData changes will NOT overwrite their selection.
   const userHasSelected = useRef(false);
 
-  // Keep refs in sync
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
   useEffect(() => { currentSaleRef.current = currentSale; }, [currentSale]);
 
@@ -55,7 +48,6 @@ export default function App() {
     if (isInitial) {
       const keys = Object.keys(data);
       const initialTab = keys.includes('signals') ? 'signals' : (keys.includes('forex') ? 'forex' : keys[0]);
-
       if (initialTab) {
         setActiveTab(initialTab);
         activeTabRef.current = initialTab;
@@ -65,12 +57,10 @@ export default function App() {
           setCurrentSale(latestSale.saleName);
           currentSaleRef.current = latestSale.saleName;
           setPlans(latestSale.plans);
-          setFlashText(latestSale.displayName.toUpperCase());
           if (latestSale.discountPercent) setDiscountPercent(latestSale.discountPercent);
         }
       }
     } else {
-      // On live update, refresh current selection if it still exists
       const tab = activeTabRef.current;
       const currentList = data[tab] || [];
       if (currentList.length > 0) {
@@ -78,7 +68,6 @@ export default function App() {
         setCurrentSale(sale.saleName);
         currentSaleRef.current = sale.saleName;
         setPlans(sale.plans);
-        setFlashText(sale.displayName.toUpperCase());
         if (sale.discountPercent) setDiscountPercent(sale.discountPercent);
       }
     }
@@ -88,49 +77,29 @@ export default function App() {
     try {
       if (!isInitial) setIsSyncing(true);
       setError(null);
-
-      // force=true bypasses the 30s server cache and hits Google fresh
       const data = await fetchAllSales(force);
+      if (Object.keys(data).length === 0) throw new Error('No sales data received from backend');
 
-      if (Object.keys(data).length === 0) {
-        throw new Error('No sales data received from backend');
-      }
-
-      // Smart Change Detection — only update UI if actual data changed
       const newHash = JSON.stringify(data);
-      if (!isInitial && !force && newHash === prevDataHashRef.current) {
-        return; // No changes detected, skip silently
-      }
-
+      if (!isInitial && !force && newHash === prevDataHashRef.current) return;
       prevDataHashRef.current = newHash;
 
-      // ── Key fix: on background poll, if user manually chose a sale that still
-      // exists in the new data, keep it — never overwrite their active selection.
       if (!isInitial && userHasSelected.current) {
         setSalesData(data);
         setLastUpdated(new Date());
         setLiveStatus('live');
-
         const tab = activeTabRef.current;
         const currentList = data[tab] || [];
         const stillExists = currentList.find(s => s.saleName === currentSaleRef.current);
         if (stillExists) {
-          // User's chosen sale still in the sheet — update its prices silently
           setPlans(stillExists.plans);
-          setFlashText(stillExists.displayName.toUpperCase());
           if (stillExists.discountPercent) setDiscountPercent(stillExists.discountPercent);
           return;
         }
-        // Their sale was removed from the sheet — fall through to auto-select latest
         userHasSelected.current = false;
       }
 
       applyData(data, isInitial);
-
-      if (!isInitial) {
-        console.log('✅ Sheet change detected! UI updated at', new Date().toLocaleTimeString());
-      }
-
     } catch (err: any) {
       console.error('Data sync failed', err);
       setLiveStatus('error');
@@ -144,73 +113,44 @@ export default function App() {
     }
   }, [applyData]);
 
-  // Initial load
+  // Initial load only — NO interval poll
   useEffect(() => {
     loadData(true);
   }, [loadData]);
 
-  // ✅ Real-time polling — checks sheet every 15 seconds for any change
-  useEffect(() => {
-    const pollTimer = setInterval(() => {
-      loadData(false);
-    }, POLL_INTERVAL);
-
-    return () => clearInterval(pollTimer);
-  }, [loadData]);
-
-  // ✅ Keep-alive — pings the server every 60s to prevent Vercel cold starts
+  // Keep-alive ping only (no UI refresh)
   useEffect(() => {
     const keepAlive = async () => {
       try {
         await fetch(`/api/proxy-sheet?gid=0&ping=1&t=${Date.now()}`);
-      } catch {
-        // Silent fail — just a keep-alive ping
-      }
+      } catch { /* silent */ }
     };
-
     const aliveTimer = setInterval(keepAlive, KEEPALIVE_INTERVAL);
     return () => clearInterval(aliveTimer);
   }, []);
 
-  // Update when tab changes (NOT when salesData silently updates in background)
-  // We split this into two effects so a background poll updating salesData
-  // does NOT retrigger sale selection and overwrite the user's choice.
   useEffect(() => {
-    // Only runs when the USER switches tabs — salesData changes are ignored here
     if (!salesData || !activeTab) return;
     const currentList = salesData[activeTab] || [];
     if (currentList.length === 0) return;
-
-    if (userHasSelected.current) {
-      // User had a selection — try to keep it on the new tab, else pick last
-      const sale = currentList.find(s => s.saleName === currentSaleRef.current) || currentList[currentList.length - 1];
-      setCurrentSale(sale.saleName);
-      currentSaleRef.current = sale.saleName;
-      setPlans(sale.plans);
-      setFlashText(sale.displayName.toUpperCase());
-      if (sale.discountPercent) setDiscountPercent(sale.discountPercent);
-    } else {
-      // No user selection yet — auto-pick the last sale
-      const sale = currentList[currentList.length - 1];
-      setCurrentSale(sale.saleName);
-      currentSaleRef.current = sale.saleName;
-      setPlans(sale.plans);
-      setFlashText(sale.displayName.toUpperCase());
-      if (sale.discountPercent) setDiscountPercent(sale.discountPercent);
-    }
-  }, [activeTab]); // ← ONLY activeTab here, NOT salesData
+    const sale = userHasSelected.current
+      ? (currentList.find(s => s.saleName === currentSaleRef.current) || currentList[currentList.length - 1])
+      : currentList[currentList.length - 1];
+    setCurrentSale(sale.saleName);
+    currentSaleRef.current = sale.saleName;
+    setPlans(sale.plans);
+    if (sale.discountPercent) setDiscountPercent(sale.discountPercent);
+  }, [activeTab]);
 
   const handleSaleChange = (saleName: string) => {
     if (!salesData || !activeTab) return;
     const currentList = salesData[activeTab] || [];
     const sale = currentList.find(s => s.saleName === saleName);
     if (sale) {
-      // Mark that user has manually chosen — polls won't overwrite this
       userHasSelected.current = true;
       setCurrentSale(saleName);
       currentSaleRef.current = saleName;
       setPlans(sale.plans);
-      setFlashText(sale.displayName.toUpperCase());
       if (sale.discountPercent) setDiscountPercent(sale.discountPercent);
     }
   };
@@ -224,6 +164,17 @@ export default function App() {
 
   const bannerRef = useRef<HTMLDivElement>(null);
   const [customBgImage, setCustomBgImage] = useState<string | null>(null);
+
+  const handleSaleNameImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => setSaleNameImage(e.target?.result as string);
+      reader.readAsDataURL(file);
+      // reset so same file can be re-selected
+      event.target.value = '';
+    }
+  };
 
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -290,16 +241,16 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen bg-black font-sans text-white overflow-hidden selection:bg-[#00e676] selection:text-black">
 
-      {/* ✅ Live Status Bar */}
+      {/* Status Bar — updated to show manual refresh only */}
       <div className="flex items-center justify-between px-6 py-1.5 bg-[#020a04] border-b border-white/5">
         <span className="text-[9px] font-black text-gray-600 uppercase tracking-widest">SureshotFX Banner Studio</span>
         <div className="flex items-center space-x-2">
           {liveStatus === 'live' && (
             <>
-              <div className="w-1.5 h-1.5 bg-[#00e676] rounded-full animate-pulse shadow-[0_0_6px_#00e676]" />
+              <div className="w-1.5 h-1.5 bg-[#00e676] rounded-full shadow-[0_0_6px_#00e676]" />
               <span className="text-[9px] font-black text-[#00e676] uppercase tracking-widest">
-                Live · Checks every 15s
-                {lastUpdated && ` · ${lastUpdated.toLocaleTimeString()}`}
+                Ready · Manual Refresh
+                {lastUpdated && ` · Last synced ${lastUpdated.toLocaleTimeString()}`}
               </span>
             </>
           )}
@@ -312,7 +263,7 @@ export default function App() {
           {liveStatus === 'error' && (
             <>
               <div className="w-1.5 h-1.5 bg-red-500 rounded-full" />
-              <span className="text-[9px] font-black text-red-400 uppercase tracking-widest">Sync Error · Will retry</span>
+              <span className="text-[9px] font-black text-red-400 uppercase tracking-widest">Sync Error · Click Refresh</span>
             </>
           )}
         </div>
@@ -339,40 +290,42 @@ export default function App() {
         })}
       </div>
 
-      {/* The 16:9 Banner Canvas */}
+      {/* Banner Canvas */}
       <div className="flex-1 flex items-center justify-center p-8 overflow-auto">
         <BannerCanvas
           ref={bannerRef}
           mode={activeTab as any}
-          flashText={flashText}
           discountPercent={discountPercent}
           bgImage={customBgImage || bgImage}
           plans={plans}
+          saleNameImage={saleNameImage}
+          onUploadSaleNameImage={handleSaleNameImageUpload}
           sectionTitle={
             activeTab ? `${activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Subscription Plan` : ""
           }
         />
       </div>
 
-      {/* The Editor Control Panel */}
+      {/* Control Panel */}
       <ControlPanel
         props={{
-          flashText,
           discountPercent,
           bgPrompt,
           isGenerating,
           isSyncing,
           availableSales: currentAvailableSales,
-          currentSale
+          currentSale,
+          saleNameImage
         }}
         actions={{
-          setFlashText,
           setDiscountPercent,
           setBgPrompt,
           generateBackground: handleGenerateBackground,
           setCurrentSale: handleSaleChange,
           handleDownload: handleDownload,
           handleImageUpload: handleImageUpload,
+          handleSaleNameImageUpload: handleSaleNameImageUpload,
+          clearSaleNameImage: () => setSaleNameImage(null),
           handleRefresh: () => { userHasSelected.current = false; loadData(false, true); }
         }}
       />

@@ -3,43 +3,29 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-interface ControlPanelProps {
-  props: {
-    flashText: string;
-    discountPercent: string;
-    bgPrompt: string;
-    isGenerating: boolean;
-  };
-  actions: {
-    setFlashText: (v: string) => void;
-    setDiscountPercent: (v: string) => void;
-    setBgPrompt: (v: string) => void;
-    generateBackground: () => void;
-  };
-}
-
 import React from "react";
 import { Download, Upload, RefreshCw } from "lucide-react";
 import { SalePricing } from "../services/sheetService";
 
 export const ControlPanel = ({ props, actions }: {
   props: {
-    flashText: string;
     discountPercent: string;
     bgPrompt: string;
     isGenerating: boolean;
     isSyncing: boolean;
     availableSales: SalePricing[];
     currentSale: string;
+    saleNameImage: string | null;
   };
   actions: {
-    setFlashText: (v: string) => void;
     setDiscountPercent: (v: string) => void;
     setBgPrompt: (v: string) => void;
     generateBackground: () => void;
     setCurrentSale: (v: string) => void;
     handleDownload: () => void;
     handleImageUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
+    handleSaleNameImageUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
+    clearSaleNameImage: () => void;
     handleRefresh: () => void;
   };
 }) => {
@@ -49,7 +35,7 @@ export const ControlPanel = ({ props, actions }: {
       <div className="flex items-center space-x-3 shrink-0">
         <div className="flex flex-col">
           <div className="flex items-center space-x-2">
-            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest leading-none">Active Sale</label>
+            {/* Sale label removed */}
             {props.isSyncing && (
               <div className="flex items-center space-x-1">
                 <div className="w-1.5 h-1.5 bg-[#00e676] rounded-full animate-pulse shadow-[0_0_8px_#00e676]" />
@@ -71,15 +57,43 @@ export const ControlPanel = ({ props, actions }: {
         </select>
       </div>
 
-      {/* Text Config */}
-      <div className="flex items-center space-x-3">
-        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Text</label>
-        <input 
-          type="text" 
-          value={props.flashText}
-          onChange={(e) => actions.setFlashText(e.target.value)}
-          className="bg-zinc-900 border border-white/10 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#00e676] w-32 font-bold"
-        />
+      {/* Sale Name Image Upload */}
+      <div className="flex items-center space-x-2 shrink-0">
+        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest whitespace-nowrap">Sale Name</label>
+        {props.saleNameImage ? (
+          <div className="flex items-center space-x-2">
+            <img
+              src={props.saleNameImage}
+              alt="Sale Name"
+              className="h-10 object-contain rounded border border-white/10"
+              style={{ maxWidth: '120px' }}
+            />
+            <button
+              onClick={actions.clearSaleNameImage}
+              className="px-2 py-1 rounded text-[9px] uppercase font-black tracking-widest bg-red-500/10 border border-red-500/40 text-red-400 hover:bg-red-500/20 transition-all"
+            >
+              Clear
+            </button>
+          </div>
+        ) : (
+          <div>
+            {/* Hidden file input — label triggers it reliably */}
+            <input
+              type="file"
+              accept="image/png,image/*"
+              onChange={actions.handleSaleNameImageUpload}
+              className="hidden"
+              id="sale-name-image-upload"
+            />
+            <label
+              htmlFor="sale-name-image-upload"
+              className="flex items-center space-x-1.5 px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-all text-[11px] uppercase font-black tracking-widest cursor-pointer"
+            >
+              <Upload size={13} className="text-[#00e676]" />
+              <span>Upload Sale Name</span>
+            </label>
+          </div>
+        )}
       </div>
 
       {/* Discount Config */}

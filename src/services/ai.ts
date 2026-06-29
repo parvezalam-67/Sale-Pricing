@@ -3,28 +3,28 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { GoogleGenAI } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export async function generateBannerBackground(prompt: string): Promise<string | null> {
   try {
-    // Pollinations.ai is a great free alternative for image generation
-    const encodedPrompt = encodeURIComponent(prompt);
-    const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1280&height=720&nologo=true&enhance=true&seed=${Math.floor(Math.random() * 1000000)}`;
-    
-    // We fetch the image and convert it to base64 to maintain compatibility with your existing state
-    const response = await fetch(imageUrl);
-    const blob = await response.blob();
-    
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(blob);
+    const response = await fetch('/api/generate-image', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ prompt }),
     });
-  } catch (error) {
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP error ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.image;
+  } catch (error: any) {
     console.error("Image generation failed:", error);
+    alert(error.message || "Failed to generate image. Please check that GEMINI_API_KEY is configured in your .env.local file.");
     return null;
   }
 }

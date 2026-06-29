@@ -4,6 +4,11 @@ import { Server } from 'socket.io';
 import path from 'path';
 import cors from 'cors';
 import axios from 'axios';
+import dotenv from 'dotenv';
+import { GoogleGenAI } from '@google/genai';
+
+dotenv.config({ path: '.env.local' });
+dotenv.config({ path: '.env' });
 
 export const app = express();
 export const httpServer = createServer(app);
@@ -102,6 +107,44 @@ app.get('/api/proxy-sheet', async (req, res) => {
     } else {
       res.status(504).json({ error: 'Gateway Timeout or Connection Failed after retries' });
     }
+  }
+});
+
+// Image generation endpoint using Gemini's Imagen model
+app.post('/api/generate-image', async (req, res) => {
+  const { prompt } = req.body;
+  if (!prompt) {
+    return res.status(400).json({ error: 'Prompt is required' });
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return res.status(400).json({
+      error: 'GEMINI_API_KEY is not set on the server. Please set it in .env.local'
+    });
+  }
+
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateImages({
+      model: 'imagen-3.0-generate-002',
+      prompt: prompt,
+      config: {
+        numberOfImages: 1,
+        outputMimeType: 'image/jpeg',
+        aspectRatio: '16:9',
+      },
+    });
+
+    const base64Image = response.generatedImages?.[0]?.image?.imageBytes;
+    if (!base64Image) {
+      throw new Error('No image bytes returned from Imagen API');
+    }
+
+    res.json({ image: `data:image/jpeg;base64,${base64Image}` });
+  } catch (error: any) {
+    console.error('[generate-image] Error:', error.message || error);
+    res.status(500).json({ error: 'Failed to generate image', details: error.message || String(error) });
   }
 });
 

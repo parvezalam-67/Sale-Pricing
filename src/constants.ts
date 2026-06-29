@@ -44,87 +44,114 @@ export const PLANS: PricingPlan[] = [
   }
 ];
 
-export const THEMES: Record<string, any> = {
+// ─── Theme spec ───────────────────────────────────────────────────────────────
+// accent        — main neon colour (title, price highlight, border glow)
+// bg            — banner gradient stops [dark, lighter]
+// outerShell    — solid fill of the outer SVG rect  (standard cards)
+// innerGradStart— top colour of the radial gradient inside the inner rect
+// innerStroke   — stroke colour of the inner border rect
+// priceColor    — colour for the sale / new price text
+// headerTextDark— true → featured card header text is #000 (light accent bg)
+// ─────────────────────────────────────────────────────────────────────────────
+export const THEMES: Record<string, {
+  accent: string;
+  bg: string[];
+  outerShell: string;
+  innerGradStart: string;
+  innerStroke: string;
+  priceColor: string;
+  headerTextDark: boolean;
+}> = {
   forex: {
     accent: '#00e676',
     bg: ['#030e06', '#0a2e16'],
-    card: {
-      standard: ['#071e0f', '#0c331a'],
-      featured: ['#0c331a', '#144d28']
-    }
+    outerShell: '#007D43',
+    innerGradStart: '#007044',
+    innerStroke: '#0E7C51',
+    priceColor: '#01F595',
+    headerTextDark: false,
   },
   signals: {
     accent: '#00e676',
     bg: ['#030e06', '#0a2e16'],
-    card: {
-      standard: ['#071e0f', '#0c331a'],
-      featured: ['#0c331a', '#144d28']
-    }
-  },
-  gold: {
-    accent: '#ffca28',
-    bg: ['#1a1400', '#332800'], // Dark yellow to slightly lighter dark yellow
-    card: {
-      standard: ['#261d00', '#4d3b00'], // Darker gold tones for Rise/Pro
-      featured: ['#332800', '#664d00']  // Slightly lighter gold for Advance
-    }
-  },
-  indices: {
-    accent: '#00ffff',
-    bg: ['#000d0d', '#001a1a'], // Dark neon blue theme
-    card: {
-      standard: ['#001a1a', '#003333'], 
-      featured: ['#002626', '#004d4d']
-    }
-  },
-  product: {
-    accent: '#e040fb', // Purple accent
-    bg: ['#0f001a', '#1a0033'], // Deep purple theme
-    card: {
-      standard: ['#1a0526', '#2a0a3d'], 
-      featured: ['#330c4d', '#4d1475']
-    }
+    outerShell: '#007D43',
+    innerGradStart: '#007044',
+    innerStroke: '#0E7C51',
+    priceColor: '#01F595',
+    headerTextDark: false,
   },
   algo: {
-    accent: '#00ff7b',
+    accent: '#00e676',
     bg: ['#020c08', '#04151a'],
-    card: {
-      standard: ['#001a1a', '#003333'],
-      featured: ['#002626', '#004d4d']
-    }
+    outerShell: '#007D43',
+    innerGradStart: '#007044',
+    innerStroke: '#0E7C51',
+    priceColor: '#01F595',
+    headerTextDark: false,
   },
   copier: {
     accent: '#00e676',
     bg: ['#030e06', '#0a2e16'],
-    card: {
-      standard: ['#071e0f', '#0c331a'],
-      featured: ['#0c331a', '#144d28']
-    }
+    outerShell: '#007D43',
+    innerGradStart: '#007044',
+    innerStroke: '#0E7C51',
+    priceColor: '#01F595',
+    headerTextDark: false,
   },
-  guardian: {
-    accent: '#448aff',
-    bg: ['#000a1a', '#001a33'],
-    card: {
-      standard: ['#001426', '#00264d'],
-      featured: ['#001a33', '#003366']
-    }
+  gold: {
+    accent: '#ffca28',
+    bg: ['#1a1400', '#332800'],
+    outerShell: '#7a5c00',
+    innerGradStart: '#4d3b00',
+    innerStroke: '#8a6c00',
+    priceColor: '#ffca28',
+    headerTextDark: true,
+  },
+  indices: {
+    accent: '#00ffff',
+    bg: ['#000d0d', '#001a1a'],
+    outerShell: '#003333',
+    innerGradStart: '#002626',
+    innerStroke: '#006666',
+    priceColor: '#00ffff',
+    headerTextDark: true,
   },
   raven: {
     accent: '#00ffff',
     bg: ['#000d0d', '#001a1a'],
-    card: {
-      standard: ['#001a1a', '#003333'],
-      featured: ['#002626', '#004d4d']
-    }
+    outerShell: '#003333',
+    innerGradStart: '#002626',
+    innerStroke: '#006666',
+    priceColor: '#00ffff',
+    headerTextDark: true,
   },
   combo: {
     accent: '#00ffff',
-    bg: ['#030e06', '#001a1a'], // Global dark to Indices blue dark
-    card: {
-      standard: ['#0c331a', '#002626'], 
-      featured: ['#144d28', '#004d4d']
-    }
-  }
+    bg: ['#030e06', '#001a1a'],
+    outerShell: '#003333',
+    innerGradStart: '#002626',
+    innerStroke: '#006666',
+    priceColor: '#00ffff',
+    headerTextDark: true,
+  },
+  guardian: {
+    accent: '#448aff',
+    bg: ['#000a1a', '#001a33'],
+    outerShell: '#001a40',
+    innerGradStart: '#001433',
+    innerStroke: '#1a5599',
+    priceColor: '#448aff',
+    headerTextDark: false,
+  },
+  product: {
+    accent: '#e040fb',
+    bg: ['#0f001a', '#1a0033'],
+    outerShell: '#2a0a3d',
+    innerGradStart: '#1a0533',
+    innerStroke: '#4d1475',
+    priceColor: '#e040fb',
+    headerTextDark: false,
+  },
 };
 
 export const DISCOUNT_LABEL_SIZE = 0.9;
@@ -144,6 +171,10 @@ export const CARD_HEADER_FONT_SIZE = 1.7; // in vw units
 
 export const TITLE_Y_OFFSET = 2.0; // Positive move down, Negative move up (vw)
 export const TITLE_MAX_WIDTH = 100; // In percentage of its container (35% of banner)
+
+export const SALE_NAME_X_OFFSET = -1.56; // Negative move left, Positive move right (vw) — ~20px at 1280px
+export const SALE_NAME_Y_OFFSET = -1.39; // Negative move up, Positive move down (vw) — ~20px at 720px tall
+export const SALE_NAME_MAX_HEIGHT = 15; // Max height of the sale name image in vw units
 
 export const OLD_PRICE_FONT_SIZE = 2.6; // in vw units
 export const NEW_PRICE_FONT_SIZE = 3.6; // in vw units
